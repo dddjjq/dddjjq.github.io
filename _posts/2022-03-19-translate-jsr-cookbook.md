@@ -24,15 +24,15 @@
 
 volatiles和monitors的主要JMM规则可以视为一个矩阵，其中的单元格表示你无法对特定顺序的字节码相关的指令进行重排序。这张表本身并不是JMM的规格，只是用来观察编译器和运行时系统（runtime system）运行结果的一种有效方法。
 
-![image-20220319164300751](/Users/dingyunlong/Code/Blog/dddjjq.github.io/_posts/image/2022-03-19/image-20220319164300751.png)
+![image](https://github.com/dddjjq/dddjjq.github.io/blob/main/_posts/image/2022-03-19/image-20220319164300751.png)
 
-1、Normal Loads包含getfield、getstatic、non-volatile field的一系列load
+1、Normal Loads即getfield、getstatic、non-volatile field的一系列load
 
-2、Normal Stores包含putfield、putstatic、non-volatile field的一系列store
+2、Normal Stores即putfield、putstatic、non-volatile field的一系列store
 
-3、Volatile Loads包含volatile fields的getfield、getstatic，对多线程可见
+3、Volatile Loads即volatile fields的getfield、getstatic，对多线程可见
 
-4、Volatile Stores包含volatile fields的putfield、putstatic，对多线程可见
+4、Volatile Stores即volatile fields的putfield、putstatic，对多线程可见
 
 5、MonitorEnters（包含synchronized方法进入）用于对多线程可见的锁对象
 
@@ -42,5 +42,19 @@ Normal Loads和Normal Store在表格中一样，Volatile Loads与MonitorEnter一
 
 在表格中，1st和2nd操作之间，可能存在任意数量的其他操作。例如，表格[Normal Store,Volatile Store]中的“No”表示一个volatile store不能与任何后续的volatile store重排序；这些至少可以在多线程语义中起作用。
 
-JSR-133规范的规则只指定了volatiles和monitors可能被多个线程访问的情况，如果编译器以某种方式（通常要付出很多努力）确保lock仅仅被单个线程访问，则lock会被消除。相似地，一个volatile filed如果只在一个线程内部访问的话，它的表现就像一个normal field。还可以进行更细粒度的优化，例如，在确定的时间间隔内依赖于证明多个线程不可访问。
+JSR-133规范的规则只指定了volatiles和monitors可能被多个线程访问的情况，如果编译器以某种方式（通常要付出很多努力）确保锁仅仅被单个线程访问，则锁会被消除。相似地，一个volatile filed如果只在一个线程内部访问的话，它的表现就像一个normal field。还可以进行更细粒度的优化，例如，在确定的时间间隔内依赖于证明多个线程不可访问。
 
+表格中的空单元格意味着如果访问不依赖于基础的Java语义（如[JLS](http://www.javasoft.com/doc/language_specification/index.html)所示），是可以重排序的。比如，尽管表格没有说明，你仍然不能把同一个序列里面对同个位置的store进行重排序。但是两个分别对不同位置的load和store是可以重排序的，并希望在编译器转换和优化的过程中依然这么做。这包括一些通常不被认为是重排序的案例；例如重用基于已加载的字段计算出的值，而不是重新加载和计算值，而这表现得像是重排序。然而，JMM规范允许消除可避免的依赖转换，然后允许重排序。
+
+在所有例子中，即使被程序员错误的同步，重排序至少要保证Java安全性。所有被观察的字段值必须是预置的零/空值，或者被某些线程写的值。 这通常需要所有堆内存持有的对象在被构造器中使用之前清零,并且不与对这些字段的加载做重排序。做这件事一个好的方法是在garbage collector回收内存的时候清零。请参阅JSR-133有关安全保证的其他比较生僻的案例。
+
+这里描述的规则和属性是关于Java层字段的访问。实际上，这些将另外与内部的簿记（bookkeeping）字段和数据交互，例如对象头、gc表和动态生成代码。
+
+#### Final字段
+对final字段的读和写表现地像普通字段有关锁和volatiles，但是有两条额外的重排序规则:
+1、（在构造器内部）对final字段的写，如果字段是一个引用，任何对这个final字段的引用，不能与后续的store（构造器之外），也就是持有该引用且对其他线程可见的变量，进行重排序，例如，不能重排序：
+~~~Java
+x.finalField = v;
+...;
+sharedRef = x;
+~~~
