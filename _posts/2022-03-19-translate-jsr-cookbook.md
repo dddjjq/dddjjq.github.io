@@ -97,3 +97,35 @@ StoreLoad 屏障:
 顺序：Store1;StoreLoad;Load2
 确保Store1的数据对其他处理可见（即，刷新到主存）先于Load2访问的数据以及后续加载的Load指令。StoreLoad屏障使用Store1的数据而不是使用被最近被其他处理器Store到同个位置的数据，以此来避免后续Load的错误加载。因为如此，在下面讨论的处理器上。StoreLoad仅在将存储与在屏障之前存储的数据的相同位置的后续加载分开时才是必须的（译注：Store1代表存储，Load2包含对屏障之前Store的数据的加载）。StoreLoad屏障几乎在所有最近的多处理器上都需要，而且通常是最昂贵的类型。昂贵的一部分原因是必须禁止通常绕过缓存来实现对写缓冲区的Load机制。这有可能通过缓冲区全刷新以及其他可能的停顿来实现，
 在下面讨论的所有处理器上面，事实证明执行了StoreLoad的指令也含有其他三种屏障的效果，所以StoreLoad用作通用(但通常非常昂贵)的栅栏。（这是经验上的事实，并不是必须的），反之不成立。其他屏障的组合并不能经常相当于StoreLoad。
+接下来的表格展示了屏障是怎么与JSR-133的排序规则相对应的：
+//TODO
+
+加上需要StoreStore屏障的特殊final-field规则如下：
+
+~~~Java
+x.finalField = v;
+StoreStore;
+sharedRef = x;
+~~~
+
+这里是一个如何放置屏障的例子：
+//TODO
+##### 数据类别和依赖
+在某些处理器上，对LoadLoad和LoadStore屏障的需求与对依赖指令的排序保证相关。在有些（大多数）处理器上，依赖前面load的值的load或者store操作在排序时不需要屏障，这通常出现在两种情况下，间接：
+~~~Java
+Load x;
+Load x.filed;
+~~~
+和控制：
+~~~Java
+Load x;
+if (predicate(x)) 
+    Load or Store y;
+~~~
+没有间接排序的处理器尤其需要对最开始通过共享引用获得的final-field引用的访问设置屏障（有点绕口）(Processors that do NOT respect indirection ordering in particular require barriers for final field access for references initially obtained through shared references)：
+~~~Java
+x = sharedRef; 
+... ; 
+LoadLoad;
+i = x.finalField;
+~~~
