@@ -24,7 +24,7 @@
 
 volatiles和monitors的主要JMM规则可以视为一个矩阵，其中的单元格表示你无法对特定顺序的字节码相关的指令进行重排序。这张表本身并不是JMM的规格，只是用来观察编译器和运行时系统（runtime system）运行结果的一种有效方法。
 
-![image](https://github.com/dddjjq/dddjjq.github.io/blob/main/_posts/image/2022-03-19/image-20220319164300751.png)
+![image](https://github.com/dddjjq/dddjjq.github.io/raw/main/_posts/image/2022-03-19/image-20220319164300751.png)
 
 1、Normal Loads即getfield、getstatic、non-volatile field的一系列load
 
@@ -129,3 +129,112 @@ x = sharedRef;
 LoadLoad;
 i = x.finalField;
 ~~~
+相反地，如同下面所述，支持数据依赖的处理器提供了一些优化掉LoadLoad和LoadStore屏障指令的机会，否则这些指令需要被发出。（但是，依赖性在任何处理器上都不会自动消除StoreLoad屏障）。
+##### 与原子指令交互
+不同处理器上需要的屏障更进一步地与MonitorEnter和MonitorExit相关。锁定和解锁通常牵涉到原子条件更新操作CAS或LoadLinked/StoreConditional (LL/SC)的使用，这些汉欧volatile读后面跟随一个volatile写的语义。虽然CAS或LL/SC可以较小地满足，一些处理器还支持一些原子指令（例如，一个非条件交换），这些有时可以替代或者与原子条件更新结合。
+在所有处理器上，原子操作可以防止读取/更新位置的写入后读取（read-after-write）问题。（否则标准的loop-until-success指令无法按照预期的方式执行）但是处理器的区别在于原子指令是否为其目标位置提供比隐式 StoreLoad 更通用的屏障属性。在某些处理上，这些指令本质上还执行MonitorEnter/Exit需要的屏障，在其他方面，部分或者全部的这些屏障必须特别触发。
+Volatiles和Monitors必须被分开来理清它们的影响，给出：
+//TODO picture
+加上需要StoreStore屏障的特殊final字段规则：
+~~~Java
+x.finalField = v; 
+StoreStore;
+sharedRef = x;
+~~~
+在这张表中，“Enter”和“Load”是一样的，“Exit”和“Store”是一样的，除非被被原子指令的使用的性质重写，特别地：
+* 在任何执行Load的同步块/方法的入口都需要EnterLoad。LoadLoad也是一样，除非在MonitorEnter使用了一个原子指令，且原子指令提供了至少包含LoadLoad的属性，在这个场景下它等价于no-op
+* 在任何执行Store的同步代码块/方法的出口，都需要StoreExit。StoreStore也是一样，除非除非在MonitorExit使用了一个原子指令，且原子指令提供了至少包含StoreStore的属性，在这个场景下它等价于no-op
+其他专业类型不太可能在编译过程中起作用（见下文），且/或在现在的处理器上退化为no-op操作。例如，在没有干预的Load或Store时，需要EnterEnter来区分嵌套的MonitorEnter。以下示例展示了大多数类型的展示位置：
+//TODO image
+Java层对原子条件更新的操作访问将会通过[JSR-166(并发工具)](http://gee.cs.oswego.edu/dl/concurrency-interest/)在JDK1.5中可用.所以编译器需要产生相关的代码，使用上表的变体，它在语义上折叠了MonitorEnter和MonitorExit，而且有时在实践中，这些Java层的原子更新表现地像是被锁包围。
+
+### 多处理器
+这里是一些MPs中普遍使用的处理器列表，同时有提供相关信息的链接。（有些需要在页面上的一些点击，或者免费的注册来获取手册）。这不是个详尽的列表，但是包含了我了解的所有现在和近期多处理器java实现中使用的处理器。下面描述的处理器列表和属性并不明确。某些情况下我只是报告我做的阅读，而且有可能出现漏掉的情况。有些相关的手册对一些JMM相关的属性并不清晰。请帮我使其明确。
+比较好的关于屏障和机器相关属性的硬件规格在这里没有列出来的是[Hans Boehm's atomic_ops library](http://www.hpl.hp.com/research/linux/atomic_ops/),[Linux Kernel Source](http://kernel.org/),[Linux Scalability Effort](http://lse.sourceforge.net/)。Linux内核中的屏障与这里讨论屏障的直接对应，并已经移植到多数处理器。有关不同处理器支持的底层模型的描述，见[Sarita Adve et al, Recent Advances in Memory Consistency Models for Hardware Shared-Memory Systems and Sarita Adve and Kourosh Gharachorloo](http://rsim.cs.uiuc.edu/~sadve/)和[Shared Memory Consistency Models: A Tutorial.](http://rsim.cs.uiuc.edu/~sadve/)
+
+sparc-TSO
+Ultrasparc 1, 2, 3 (sparcv9) 在TSO(Total Store Order)模式下。Ultra3s只支持TSO模式（在Ultra1/2中没有使用过RMO模式，所以可以忽略。见[UltraSPARC III Cu User's Manual](http://www.sun.com/processors/manuals/index.html)和[The SPARC Architecture Manual, Version 9 .](http://www.sparc.com/resource.htm)
+
+x86（和x64）
+Intel 468+，和AMD显然还有其他，2005-2009有过重新规范，但是现在的规格几乎与TSO一样，主要的区别只在于不同缓存模式的支持，和处理边界条件比如未对齐的访问和特殊指令的形式。见    Se[The IA-32 Intel Architecture Software Developers Manuals: System Programming Guide](http://www.intel.com/products/processor/manuals/)和[AMD Architecture Programmer's Manual Programming.ia64](http://www.amd.com/us-en/Processors/DevelopWithAMD/0,,30_2252_875_7044,00.html)
+
+ia64
+Itanium,见[Intel Itanium Architecture Software Developer's Manual, Volume 2: System Architecture](http://developer.intel.com/design/itanium/manuals/iiasdmanual.htm)
+
+ppc (POWER)
+所有斑斑拥有同样的基础内存模型，但是随着时间推移，一些内存屏障指令的名字和定义有所变动。列出来的版本是从Power4开始；细节见架构手册：[MPC603e RISC Microprocessor Users Manual](http://www.motorola.com/PowerPC/),[MPC7410/MPC7400 RISC Microprocessor Users Manual](http://www.motorola.com/PowerPC/),[Book II of PowerPC Architecture Book](http://www-106.ibm.com/developerworks/eserver/articles/archguide.html),[PowerPC Microprocessor Family: Software reference manual](http://www-3.ibm.com/chips/techlib/techlib.nsf/techdocs/F6153E213FDD912E87256D49006C6541),[Book E- Enhanced PowerPC Architecture](http://www-106.ibm.com/developerworks/eserver/articles/powerpc.html)
+
+arm
+7.+版本。见[ARM processor specifications](http://infocenter.arm.com/help/index.jsp)
+
+alpha
+21264x以及我认为其他所有的。见[Alpha Architecture Handbook](http://www.alphalinux.org/docs/alphaahb.html)
+
+pa-risc
+HP pa-risc实现，见[pa-risc 2.0 Architecture](http://h21007.www2.hp.com/dspp/tech/tech_TechDocumentDetailPage_IDX/1,1701,2533,00.html)
+
+这里是这些处理器如何支持屏障和原子性：
+//TDOO image
+
+注：
+* 有些列出来的屏障指令属性比标出来的表格中需要的属性更强，但似乎是达到预期效果最方便的做法。
+* 列出的屏障指令是为普通程序内存设计的，但不一定是其他特殊形式/模式的缓存和用于 IO 和系统任务的内存。 例如，在 x86-SPO 上，StoreStorebarriers (“sfence”) 需要与 WriteCombining (WC) 缓存模式一起使用，该模式旨在用于系统级批量传输等。操作系统对程序和数据使用回写模式，这不会 需要 StoreStore 屏障。
+* 在 x86 上，任何带锁前缀的指令都可以用作 StoreLoad 屏障。 （Linux 内核中使用的形式是 no-op lock；addl $0,0(%%esp)。）支持“SSE2”扩展的版本（Pentium4 和更高版本）支持 mfence 指令，这似乎更可取，除非带有锁定前缀的指令 无论如何都需要CAS。 cpuid 指令也有效，但速度较慢。
+* 在 ia64 上，LoadStore、LoadLoad 和 StoreStore 屏障被折叠成特殊形式的加载和存储指令——没有单独的指令。 ld.acq 充当（load；LoadLoad+LoadStore），st.rel 充当（LoadStore+StoreStore；store）。 这些都没有提供 StoreLoad 屏障——你需要一个单独的 mf 屏障指令。
+* 在 ARM 和 ppc 上，可能有机会在存在数据依赖关系的情况下用非基于栅栏的指令序列替换加载栅栏。 [Cambridge Relaxed Memory Concurrency Group](http://www.cl.cam.ac.uk/~pes20/ppc-supplemental/) 在工作中描述了它们应用的序列和案例。
+* sparc membar 指令支持所有四种屏障模式以及模式组合。 但在 TSO 中只需要 StoreLoad 模式。 在某些 UltraSparc 上，任何 membar 指令都会产生 aStoreLoad 的效果，无论模式如何。
+* 支持“流式 SIMD”SSE2 扩展的 x86 处理器仅在与这些流式指令相关时才需要 LoadLoad“lfence”。
+* 尽管 pa-risc 规范没有强制要求，但所有 HP pa-risc 实现都是顺序一致的，因此没有内存屏障指令。
+* pa-risc 上唯一的原子原语是 ldcw，它是一种测试和设置形式，您需要使用 HP 自旋锁白皮书中的技术来构建原子条件更新。
+* CAS 和 LL/SC 在不同的处理器上采用多种形式，仅在字段宽度方面有所不同，至少包括 4 和 8 字节版本。
+* 在 sparc 和 x86 上，CAS 具有隐式的前置和后置完整 StoreLoad 屏障。 sparcv9 架构手册说 CAS 不需要具有 post-StoreLoad 屏障属性，但芯片手册表明它在 ultrasparcs 上具有。
+* 在 ppc 和 alpha 上，LL/SC 仅针对正在加载/存储的位置具有隐式障碍，但没有更一般的障碍属性。
+* ia64 cmpxchg 指令还具有关于正在加载/存储的位置的隐式障碍，但另外需要一个可选的 .acq（加载加载后+加载存储）或 .rel（存储存储+加载存储前）修饰符。 形式 cmpxchg.acq 可用于 MonitorEnter，cmpxchg.rel 用于 MonitorExit。 在不能保证退出和进入匹配的情况下，可能还需要一个 ExitEnter (StoreLoad) 屏障。
+* Sparc、x86 和 ia64 支持无条件交换（swap、xchg）。 Sparc ldstub 是一个单字节的测试和设置。 ia64 fetchadd 返回先前的值并添加到它。 在 x86 上，一些指令（例如 add-to-memory）可以加锁前缀，使它们以原子方式运行。
+
+### 原则
+##### 单处理器
+如果你在生成保证只在单处理器上运行的代码，你可以跳过接下来的部分。因为单处理器保持明显的顺序一致性，除非对象内存是异步可访问的IO内存共享，否则你永远不需要发出屏障。这可能发生在特殊映射的java.nio缓冲区中，但可能仅以影响内部JVM支持代码的方式。此外，可以想象，如果上下文切换不需要足够的同步，则需要一些特殊的屏障。
+
+##### 插入屏障
+屏障指令适用于在程序执行期间发生的不同类型的访问。 找到一个最小化执行障碍总数的“最佳”位置几乎是不可能的。 编译器通常无法判断给定的加载或存储是否会在另一个需要屏障的之前或之后； 例如，当一个volatile存储后面跟着一个返回时。 最简单的保守策略是假设在为任何给定的加载、存储、锁定或解锁生成代码时，会出现需要“最重”障碍的访问：
+1.在每个 volatile 存储之前发出 StoreStore 屏障。
+（在 ia64 上，您必须将此和大多数障碍折叠到相应的加载或存储指令中。）
+2.在所有存储之后但在从具有final字段的任何类的任何构造函数返回之前发出 StoreStore 屏障。
+3.在每个volatile存储之后发出 StoreLoad 屏障。
+请注意，您可以改为在每次 volatile 加载之前发出一个，但这对于使用 volatile 的典型程序来说会更慢，其中读取次数大大超过写入次数。 或者，如果可用，您可以将 volatile 存储实现为原子指令（例如 x86 上的 XCHG）并省略屏障。 如果原子指令比 StoreLoad 屏障便宜，这可能更有效。
+4.在每次volatile加载后发出 LoadLoad 和 LoadStore 屏障。
+在保留数据相关排序的处理器上，如果下一条访问指令取决于加载的值，则无需发出屏障。 特别是，如果后续指令是空值检查或加载该引用的字段，则在加载 volatile 引用后不需要屏障。
+5.在每个 MonitorEnter 之前或每个 MonitorExit 之后发出 ExitEnter 屏障。
+（如上所述，如果 MonitorExit 或 MonitorEnter 使用提供等效于 StoreLoad 屏障的原子指令，则 ExitEnter 是无操作的。对于在其余步骤中涉及 Enter 和 Exit 的其他人也是如此。）
+6.在每个 MonitorEnter 之后发出 EnterLoad 和 EnterStore 屏障。
+7.在每个 MonitorExit 之前发出 StoreExit 和 LoadExit 屏障。
+8.如果在本质上不提供间接加载排序的处理器上，请在每次加载最终字段之前发出 LoadLoad 屏障。 （此[JMM列表](http://www.cs.umd.edu/~pugh/java/memoryModel/archive/0180.html)发布中讨论了一些替代策略，以及对 [linux 数据相关障碍](http://lse.sourceforge.net/locking/wmbdd.html)的描述。）
+
+许多这些障碍通常会减少到no-op。 事实上，它们中的大多数都减少到no-op，但是在不同的处理器和锁定方案下以不同的方式。 对于最简单的示例，基本符合 x86 上的 JSR-133 或使用 CAS 锁定数量的 sparc-TSO 仅在 volatile 存储之后放置 StoreLoad 屏障。
+
+##### 移除屏障
+上面的保守策略可能对许多程序来说都是可以接受的。 围绕volatile的主要性能问题发生在与存储关联的 StoreLoad 屏障上。 这些应该是相对少见的——在并发程序中使用 volatile 的主要原因是为了避免在读取时使用锁，这只是在读取大大压倒写入时才会出现的问题。 但至少可以通过以下方式改进这一策略：
+* 消除多余的屏障。 上表表明，可以通过以下方式消除障碍：
+//TODO image
+类似的消除可用于与锁的交互，但取决于锁的实现方式。 在存在循环、调用和分支的情况下执行所有这些操作留给读者作为练习。 :-)
+* 重新排列代码（在允许的约束范围内）以进一步消除由于数据依赖于保留此类排序的处理器而不需要的 LoadLoad 和 LoadStore 屏障。
+* 移动指令流中发出障碍的点，以改进调度，只要它们仍然出现在所需的间隔内的某个地方。
+* 移除不需要的屏障，因为多个线程不可能依赖它们； 例如，可证明仅从单个线程可见的易失性。 此外，当可以证明线程只能存储或只能加载某些字段时，消除一些障碍。 所有这些通常都需要大量的分析。
+
+##### 大杂烩
+JSR-133 还解决了一些其他问题，这些问题在更专业的情况下可能会带来障碍：
+* Thread.start() 需要屏障确保启动的线程在调用点看到调用者可见的所有存储。 相反， Thread.join() 需要屏障以确保调用者看到终止线程的所有存储。 这些通常是由这些结构的实现中需要的同步生成的。
+* static final初始化需要 StoreStore 屏障，这些屏障通常包含在遵守 Java 类加载和初始化规则所需的机制中。
+* 确保默认的零/空初始字段值通常需要垃圾收集器内的屏障、同步和/或低级缓存控制。
+* 在构造函数或静态初始化器之外“神奇地”设置 System.in、System.out 和 System.err 的 JVM 私有例程需要特别注意，因为它们是 JMM 最终字段规则的特殊遗留例外。
+* 同样，设置 final 字段的内部 JVM 反序列化代码通常需要 StoreStore 屏障。
+* 终结支持可能需要屏障（在垃圾收集器内）以确保 Object.finalize 代码在对象变为未引用之前看到所有字段的所有存储。 这通常通过用于在引用队列中添加和删除引用的同步来确保。
+* JNI 例程的调用和返回可能需要屏障，尽管这似乎是一个实现质量问题。
+* 大多数处理器都有其他同步指令，主要设计用于 IO 和 OS 操作。 这些不会直接影响 JMM 问题，但可能涉及 IO、类加载和动态代码生成。
+
+### 致谢
+Thanks to Bill Pugh, Dave Dice, Jeremy Manson, Kourosh Gharachorloo, Tim Harris, Cliff Click, Allan Kielstra, Yue Yang, Hans Boehm, Kevin Normoyle, Juergen Kreileder, Alexander Terekhov, Tom Deneau, Clark Verbrugge, Peter Kessler, Peter Sewell, Jan Vitek, and Richard Grisenthwaite for corrections and suggestions. 
+
+[*Doug Lea*](http://gee.cs.oswego.edu/dl)
+最后修改于: Tue Mar 22 07:11:36 EDT 2011
