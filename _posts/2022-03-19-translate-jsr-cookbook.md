@@ -98,7 +98,8 @@ StoreLoad 屏障:
 确保Store1的数据对其他处理可见（即，刷新到主存）先于Load2访问的数据以及后续加载的Load指令。StoreLoad屏障使用Store1的数据而不是使用被最近被其他处理器Store到同个位置的数据，以此来避免后续Load的错误加载。因为如此，在下面讨论的处理器上。StoreLoad仅在将存储与在屏障之前存储的数据的相同位置的后续加载分开时才是必须的（译注：Store1代表存储，Load2包含对屏障之前Store的数据的加载）。StoreLoad屏障几乎在所有最近的多处理器上都需要，而且通常是最昂贵的类型。昂贵的一部分原因是必须禁止通常绕过缓存来实现对写缓冲区的Load机制。这有可能通过缓冲区全刷新以及其他可能的停顿来实现，
 在下面讨论的所有处理器上面，事实证明执行了StoreLoad的指令也含有其他三种屏障的效果，所以StoreLoad用作通用(但通常非常昂贵)的栅栏。（这是经验上的事实，并不是必须的），反之不成立。其他屏障的组合并不能经常相当于StoreLoad。
 接下来的表格展示了屏障是怎么与JSR-133的排序规则相对应的：
-//TODO
+
+![image](https://github.com/dddjjq/dddjjq.github.io/raw/main/_posts/image/2022-03-19/1.png)
 
 加上需要StoreStore屏障的特殊final-field规则如下：
 
@@ -109,7 +110,8 @@ sharedRef = x;
 ~~~
 
 这里是一个如何放置屏障的例子：
-//TODO
+![image](https://github.com/dddjjq/dddjjq.github.io/raw/main/_posts/image/2022-03-19/2.png)
+
 ##### 数据类别和依赖
 在某些处理器上，对LoadLoad和LoadStore屏障的需求与对依赖指令的排序保证相关。在有些（大多数）处理器上，依赖前面load的值的load或者store操作在排序时不需要屏障，这通常出现在两种情况下，间接：
 ~~~Java
@@ -134,7 +136,7 @@ i = x.finalField;
 不同处理器上需要的屏障更进一步地与MonitorEnter和MonitorExit相关。锁定和解锁通常牵涉到原子条件更新操作CAS或LoadLinked/StoreConditional (LL/SC)的使用，这些汉欧volatile读后面跟随一个volatile写的语义。虽然CAS或LL/SC可以较小地满足，一些处理器还支持一些原子指令（例如，一个非条件交换），这些有时可以替代或者与原子条件更新结合。
 在所有处理器上，原子操作可以防止读取/更新位置的写入后读取（read-after-write）问题。（否则标准的loop-until-success指令无法按照预期的方式执行）但是处理器的区别在于原子指令是否为其目标位置提供比隐式 StoreLoad 更通用的屏障属性。在某些处理上，这些指令本质上还执行MonitorEnter/Exit需要的屏障，在其他方面，部分或者全部的这些屏障必须特别触发。
 Volatiles和Monitors必须被分开来理清它们的影响，给出：
-//TODO picture
+![image](https://github.com/dddjjq/dddjjq.github.io/raw/main/_posts/image/2022-03-19/3.png)
 加上需要StoreStore屏障的特殊final字段规则：
 ~~~Java
 x.finalField = v; 
@@ -145,7 +147,7 @@ sharedRef = x;
 * 在任何执行Load的同步块/方法的入口都需要EnterLoad。LoadLoad也是一样，除非在MonitorEnter使用了一个原子指令，且原子指令提供了至少包含LoadLoad的属性，在这个场景下它等价于no-op
 * 在任何执行Store的同步代码块/方法的出口，都需要StoreExit。StoreStore也是一样，除非除非在MonitorExit使用了一个原子指令，且原子指令提供了至少包含StoreStore的属性，在这个场景下它等价于no-op
 其他专业类型不太可能在编译过程中起作用（见下文），且/或在现在的处理器上退化为no-op操作。例如，在没有干预的Load或Store时，需要EnterEnter来区分嵌套的MonitorEnter。以下示例展示了大多数类型的展示位置：
-//TODO image
+![image](https://github.com/dddjjq/dddjjq.github.io/raw/main/_posts/image/2022-03-19/4.png)
 Java层对原子条件更新的操作访问将会通过[JSR-166(并发工具)](http://gee.cs.oswego.edu/dl/concurrency-interest/)在JDK1.5中可用.所以编译器需要产生相关的代码，使用上表的变体，它在语义上折叠了MonitorEnter和MonitorExit，而且有时在实践中，这些Java层的原子更新表现地像是被锁包围。
 
 ### 多处理器
@@ -174,7 +176,7 @@ pa-risc
 HP pa-risc实现，见[pa-risc 2.0 Architecture](http://h21007.www2.hp.com/dspp/tech/tech_TechDocumentDetailPage_IDX/1,1701,2533,00.html)
 
 这里是这些处理器如何支持屏障和原子性：
-//TDOO image
+![image](https://github.com/dddjjq/dddjjq.github.io/raw/main/_posts/image/2022-03-19/5.png)
 
 注：
 * 有些列出来的屏障指令属性比标出来的表格中需要的属性更强，但似乎是达到预期效果最方便的做法。
@@ -216,7 +218,7 @@ HP pa-risc实现，见[pa-risc 2.0 Architecture](http://h21007.www2.hp.com/dspp/
 ##### 移除屏障
 上面的保守策略可能对许多程序来说都是可以接受的。 围绕volatile的主要性能问题发生在与存储关联的 StoreLoad 屏障上。 这些应该是相对少见的——在并发程序中使用 volatile 的主要原因是为了避免在读取时使用锁，这只是在读取大大压倒写入时才会出现的问题。 但至少可以通过以下方式改进这一策略：
 * 消除多余的屏障。 上表表明，可以通过以下方式消除障碍：
-//TODO image
+![image](https://github.com/dddjjq/dddjjq.github.io/raw/main/_posts/image/2022-03-19/6.png)
 类似的消除可用于与锁的交互，但取决于锁的实现方式。 在存在循环、调用和分支的情况下执行所有这些操作留给读者作为练习。 :-)
 * 重新排列代码（在允许的约束范围内）以进一步消除由于数据依赖于保留此类排序的处理器而不需要的 LoadLoad 和 LoadStore 屏障。
 * 移动指令流中发出障碍的点，以改进调度，只要它们仍然出现在所需的间隔内的某个地方。
