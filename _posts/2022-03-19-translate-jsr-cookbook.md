@@ -16,11 +16,11 @@
 
 这是一个非官方的、由JSR-133指定的新Java Memory Model实现指南。本文尽可能提供了一些规则存在的简要背景，而更多专注于他们在指令重排序、多处理屏障指令和原子操作方面对编译器和JVM的影响。并提供了一些推荐的方法用于满足JSR-133的规定。本文之所以非官方是因为它包含了特定处理器属性和规格的解释。我们无法保证这些解释是正确的。同时。处理器规格和实现随时有可能发生改变。
 
-### 重排序
+## 重排序
 
 对一个编译器开发者来说，JMM主要由一些规则组成，这些规则禁止获取fields（fields意味着包含许多元素）或者monitor的指令的重排序
 
-#### Volatiles和Monitors
+### Volatiles和Monitors
 
 volatiles和monitors的主要JMM规则可以视为一个矩阵，其中的单元格表示你无法对特定顺序的字节码相关的指令进行重排序。这张表本身并不是JMM的规格，只是用来观察编译器和运行时系统（runtime system）运行结果的一种有效方法。
 
@@ -50,7 +50,7 @@ JSR-133规范的规则只指定了volatiles和monitors可能被多个线程访�
 
 这里描述的规则和属性是关于Java层字段的访问。实际上，这些将另外与内部的簿记（bookkeeping）字段和数据交互，例如对象头、gc表和动态生成代码。
 
-#### Final字段
+### Final字段
 对final字段的读和写表现地像普通字段有关锁和volatiles，但是有两条额外的重排序规则:
 1、（在构造器内部）对final字段的写，如果字段是一个引用，任何对这个final字段的引用，不能与后续的store（构造器之外），也就是持有该引用且对其他线程可见的变量，进行重排序，例如，不能重排序：
 ~~~Java
@@ -73,11 +73,11 @@ i = x.finalField;
 ~~~
 由于二者之间是依赖关系，编译器永远也不应该重排序，但此规则可能对某些处理器产生影响。
 
-#### 内存屏障
+### 内存屏障
 编译器和处理器必须遵守重排序规则。由于单处理都保证顺序("as-if-sequential")一致性，所以不需要做额外工作来保证有序性。但是在多处理上，保证一致通常需要发射屏障指令。即使某个编译器优化掉了某个字段的访问（例如有个被加载的值没有用到），屏障依然需要被生成就好像访问依然存在（尽管见下文关于独立优化屏障）TODO
 内存屏障仅在一些内存模型中间接地与高级的概念相关联，例如"acquire"和"release"。而且内存屏障并不是“同步屏障”。而且内存屏障和垃圾回收期中的某些“写屏障”并没有关系。内存屏障仅直接控制CPU与其缓存的交互，关于包含有等待被刷新到主存中的写缓冲区，和/或等待加载或预测执行指令的缓冲区。这些影响可能导致缓存、主存和其他处理器的进一步交互。但在JMM中，没有对多处理器之间交互的形式做出要求，只要最终store被全局执行即可，即，在所有处理器上都可见，并且当可见时加载会获取它们。
 
-##### 类别
+#### 类别
 几乎所有的处理器都支持至少一种粗粒度的屏障指令，通常被成为栅栏(Fence)，它保证了所有在栅栏之前的store和load会被严格地排序在任何栅栏之后的store和load。这在任何处理器上都通常是最耗时的指令（通常接近、甚至比原子指令更昂贵）。大多数处理器额外地支持更多细粒度的屏障。
 内存屏障一个需要点时间来适应的属性是它们在内存的访问之间添加。尽管在一些处理器上叫屏障指令，对的/好的屏障取决于它分开的访问类型。这里有常见的屏障分类，它们很好地映射到现有处理器上的特定指令（有时候是no-ops）
 
@@ -110,9 +110,10 @@ sharedRef = x;
 ~~~
 
 这里是一个如何放置屏障的例子：
+
 ![image](https://github.com/dddjjq/dddjjq.github.io/raw/main/_posts/image/2022-03-19/2.png)
 
-##### 数据类别和依赖
+### 数据类别和依赖
 在某些处理器上，对LoadLoad和LoadStore屏障的需求与对依赖指令的排序保证相关。在有些（大多数）处理器上，依赖前面load的值的load或者store操作在排序时不需要屏障，这通常出现在两种情况下，间接：
 ~~~Java
 Load x;
@@ -132,7 +133,7 @@ LoadLoad;
 i = x.finalField;
 ~~~
 相反地，如同下面所述，支持数据依赖的处理器提供了一些优化掉LoadLoad和LoadStore屏障指令的机会，否则这些指令需要被发出。（但是，依赖性在任何处理器上都不会自动消除StoreLoad屏障）。
-##### 与原子指令交互
+### 与原子指令交互
 不同处理器上需要的屏障更进一步地与MonitorEnter和MonitorExit相关。锁定和解锁通常牵涉到原子条件更新操作CAS或LoadLinked/StoreConditional (LL/SC)的使用，这些汉欧volatile读后面跟随一个volatile写的语义。虽然CAS或LL/SC可以较小地满足，一些处理器还支持一些原子指令（例如，一个非条件交换），这些有时可以替代或者与原子条件更新结合。
 在所有处理器上，原子操作可以防止读取/更新位置的写入后读取（read-after-write）问题。（否则标准的loop-until-success指令无法按照预期的方式执行）但是处理器的区别在于原子指令是否为其目标位置提供比隐式 StoreLoad 更通用的屏障属性。在某些处理上，这些指令本质上还执行MonitorEnter/Exit需要的屏障，在其他方面，部分或者全部的这些屏障必须特别触发。
 Volatiles和Monitors必须被分开来理清它们的影响，给出：
@@ -150,7 +151,7 @@ sharedRef = x;
 ![image](https://github.com/dddjjq/dddjjq.github.io/raw/main/_posts/image/2022-03-19/4.png)
 Java层对原子条件更新的操作访问将会通过[JSR-166(并发工具)](http://gee.cs.oswego.edu/dl/concurrency-interest/)在JDK1.5中可用.所以编译器需要产生相关的代码，使用上表的变体，它在语义上折叠了MonitorEnter和MonitorExit，而且有时在实践中，这些Java层的原子更新表现地像是被锁包围。
 
-### 多处理器
+## 多处理器
 这里是一些MPs中普遍使用的处理器列表，同时有提供相关信息的链接。（有些需要在页面上的一些点击，或者免费的注册来获取手册）。这不是个详尽的列表，但是包含了我了解的所有现在和近期多处理器java实现中使用的处理器。下面描述的处理器列表和属性并不明确。某些情况下我只是报告我做的阅读，而且有可能出现漏掉的情况。有些相关的手册对一些JMM相关的属性并不清晰。请帮我使其明确。
 比较好的关于屏障和机器相关属性的硬件规格在这里没有列出来的是[Hans Boehm's atomic_ops library](http://www.hpl.hp.com/research/linux/atomic_ops/),[Linux Kernel Source](http://kernel.org/),[Linux Scalability Effort](http://lse.sourceforge.net/)。Linux内核中的屏障与这里讨论屏障的直接对应，并已经移植到多数处理器。有关不同处理器支持的底层模型的描述，见[Sarita Adve et al, Recent Advances in Memory Consistency Models for Hardware Shared-Memory Systems and Sarita Adve and Kourosh Gharachorloo](http://rsim.cs.uiuc.edu/~sadve/)和[Shared Memory Consistency Models: A Tutorial.](http://rsim.cs.uiuc.edu/~sadve/)
 
@@ -194,11 +195,11 @@ HP pa-risc实现，见[pa-risc 2.0 Architecture](http://h21007.www2.hp.com/dspp/
 * ia64 cmpxchg 指令还具有关于正在加载/存储的位置的隐式障碍，但另外需要一个可选的 .acq（加载加载后+加载存储）或 .rel（存储存储+加载存储前）修饰符。 形式 cmpxchg.acq 可用于 MonitorEnter，cmpxchg.rel 用于 MonitorExit。 在不能保证退出和进入匹配的情况下，可能还需要一个 ExitEnter (StoreLoad) 屏障。
 * Sparc、x86 和 ia64 支持无条件交换（swap、xchg）。 Sparc ldstub 是一个单字节的测试和设置。 ia64 fetchadd 返回先前的值并添加到它。 在 x86 上，一些指令（例如 add-to-memory）可以加锁前缀，使它们以原子方式运行。
 
-### 原则
-##### 单处理器
+## 原则
+### 单处理器
 如果你在生成保证只在单处理器上运行的代码，你可以跳过接下来的部分。因为单处理器保持明显的顺序一致性，除非对象内存是异步可访问的IO内存共享，否则你永远不需要发出屏障。这可能发生在特殊映射的java.nio缓冲区中，但可能仅以影响内部JVM支持代码的方式。此外，可以想象，如果上下文切换不需要足够的同步，则需要一些特殊的屏障。
 
-##### 插入屏障
+### 插入屏障
 屏障指令适用于在程序执行期间发生的不同类型的访问。 找到一个最小化执行障碍总数的“最佳”位置几乎是不可能的。 编译器通常无法判断给定的加载或存储是否会在另一个需要屏障的之前或之后； 例如，当一个volatile存储后面跟着一个返回时。 最简单的保守策略是假设在为任何给定的加载、存储、锁定或解锁生成代码时，会出现需要“最重”障碍的访问：
 1.在每个 volatile 存储之前发出 StoreStore 屏障。
 （在 ia64 上，您必须将此和大多数障碍折叠到相应的加载或存储指令中。）
@@ -215,7 +216,7 @@ HP pa-risc实现，见[pa-risc 2.0 Architecture](http://h21007.www2.hp.com/dspp/
 
 许多这些障碍通常会减少到no-op。 事实上，它们中的大多数都减少到no-op，但是在不同的处理器和锁定方案下以不同的方式。 对于最简单的示例，基本符合 x86 上的 JSR-133 或使用 CAS 锁定数量的 sparc-TSO 仅在 volatile 存储之后放置 StoreLoad 屏障。
 
-##### 移除屏障
+### 移除屏障
 上面的保守策略可能对许多程序来说都是可以接受的。 围绕volatile的主要性能问题发生在与存储关联的 StoreLoad 屏障上。 这些应该是相对少见的——在并发程序中使用 volatile 的主要原因是为了避免在读取时使用锁，这只是在读取大大压倒写入时才会出现的问题。 但至少可以通过以下方式改进这一策略：
 * 消除多余的屏障。 上表表明，可以通过以下方式消除障碍：
 ![image](https://github.com/dddjjq/dddjjq.github.io/raw/main/_posts/image/2022-03-19/6.png)
@@ -224,7 +225,7 @@ HP pa-risc实现，见[pa-risc 2.0 Architecture](http://h21007.www2.hp.com/dspp/
 * 移动指令流中发出障碍的点，以改进调度，只要它们仍然出现在所需的间隔内的某个地方。
 * 移除不需要的屏障，因为多个线程不可能依赖它们； 例如，可证明仅从单个线程可见的易失性。 此外，当可以证明线程只能存储或只能加载某些字段时，消除一些障碍。 所有这些通常都需要大量的分析。
 
-##### 大杂烩
+### 大杂烩
 JSR-133 还解决了一些其他问题，这些问题在更专业的情况下可能会带来障碍：
 * Thread.start() 需要屏障确保启动的线程在调用点看到调用者可见的所有存储。 相反， Thread.join() 需要屏障以确保调用者看到终止线程的所有存储。 这些通常是由这些结构的实现中需要的同步生成的。
 * static final初始化需要 StoreStore 屏障，这些屏障通常包含在遵守 Java 类加载和初始化规则所需的机制中。
@@ -235,7 +236,7 @@ JSR-133 还解决了一些其他问题，这些问题在更专业的情况下可
 * JNI 例程的调用和返回可能需要屏障，尽管这似乎是一个实现质量问题。
 * 大多数处理器都有其他同步指令，主要设计用于 IO 和 OS 操作。 这些不会直接影响 JMM 问题，但可能涉及 IO、类加载和动态代码生成。
 
-### 致谢
+## 致谢
 Thanks to Bill Pugh, Dave Dice, Jeremy Manson, Kourosh Gharachorloo, Tim Harris, Cliff Click, Allan Kielstra, Yue Yang, Hans Boehm, Kevin Normoyle, Juergen Kreileder, Alexander Terekhov, Tom Deneau, Clark Verbrugge, Peter Kessler, Peter Sewell, Jan Vitek, and Richard Grisenthwaite for corrections and suggestions. 
 
 [*Doug Lea*](http://gee.cs.oswego.edu/dl)
