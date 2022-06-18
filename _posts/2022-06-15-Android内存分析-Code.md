@@ -1,18 +1,18 @@
-## Android内存分析-meminfo流程及Code部分组成
+# Android内存分析-meminfo流程以及部分内存的组成
 
-### 一、引言
+## 一、引言
 
-Android内存优化属于性能优化的一环，对应用工程师来说，有些指标都是通过口口相传，显得并不清晰，今天我们分析一下内存的dump过程与部分内存构成。
+Android内存优化属于性能优化中非常重要的一环，对应用工程师来说，有些指标都是通过口口相传，显得并不清晰，甚至有些描述是错误的，今天我们分析一下内存的dump过程与部分内存构成。
 
-### 二、meminfo
+## 二、meminfo
 
 ![img](https://github.com/dddjjq/dddjjq.github.io/raw/main/_posts/image/2022-06-15/1.png)
 
 在Android中，我们可以通过dumpsys meminfo packagename的方式拿到对应应用的具体内存信息，那么这个meminfo是怎么统计的呢？
 
-我们理一下代码流程
+我们先理一下代码流程
 
-##### 1、cmd入口
+### 1、cmd入口
 
 dumpsys这条指令由dumpsys.cpp执行，这一段我们粗略的说一下，并不是核心
 
@@ -30,7 +30,7 @@ status_t err = service->dump(remote_end.get(), args);
 
 核心的流程是获取Binder句柄，然后调用dump方法。
 
-##### 2、Service
+### 2、Service
 
 在AMS中有这样一段代码：
 
@@ -63,7 +63,7 @@ public void dump(FileDescriptor fd, PrintWriter pw, String[] args, boolean asPro
 
 MemBinder的dump方法调用到AMS的dumpApplicationMemoryUsage方法中，最终调用Debug的getMemoryInfo方法:
 
-##### 3、getMemoryInfo
+### 3、getMemoryInfo
 
 frameworks/base/core/java/android/os/Debug.java
 
@@ -78,12 +78,12 @@ static jboolean android_os_Debug_getDirtyPagesPid(JNIEnv *env, jobject clazz,
     bool foundSwapPss;
     stats_t stats[_NUM_HEAP];
     memset(&stats, 0, sizeof(stats));
-		//读取进程信息，并存到stats中
+	//读取进程信息，并存到stats中
     if (!load_maps(pid, stats, &foundSwapPss)) {
         return JNI_FALSE;
     }
   
-		//Graphics内存读取
+	//Graphics内存读取
     struct graphics_memory_pss graphics_mem;
     if (read_memtrack_memory(pid, &graphics_mem) == 0) {
         stats[HEAP_GRAPHICS].pss = graphics_mem.graphics;
@@ -235,10 +235,9 @@ static bool load_maps(int pid, stats_t* stats, bool* foundSwapPss)
 
 主要流程是读取进程的smaps文件，然后转换成相应的数据结构，读取相应的值作为上层Java层对象的值，这里面每项对应的相关内存通过将结构体展开，并存入响应的数组index中，这样Java层在读取的时候，相关项在枚举中方的index一致即可。
 
-##### 4、Code组成
+### 4、Code部分组成
 
 在最终形成的meminfo中，有一项Code，这一项是通过Debug中的 getSummaryCode得到的：
-
 ~~~java
 public int getSummaryCode() {
     return getOtherPrivate(OTHER_SO)
@@ -251,9 +250,7 @@ public int getSummaryCode() {
       + getOtherPrivate(OTHER_DALVIK_OTHER_APP_CODE_CACHE);
 }
 ~~~
-
 ~~~java
-
 public int getOtherPrivate(int which) {
     return getOtherPrivateClean(which) + getOtherPrivateDirty(which);
 }
@@ -261,24 +258,38 @@ public int getOtherPrivateClean(int which) {
 	return otherStats[which * NUM_CATEGORIES + OFFSET_PRIVATE_CLEAN];
 }
 ~~~
-
 可以看到，获取code部分是通过获取PrivateClean以及PrivateDirty部分的之和得到的，heap类型包含OTHER_SO、OTHER_JAR、OTHER_TTF、OTHER_DEX等。以OTHER_JAR为例，获取otherStats的index为OTHER_JAR*NUM_CATEGORIES+OFFSET_PRIVATE_CLEAN也就是7x9+5，这里的7对应的是android_os_Debug枚举中的HEAP_JAR，OFFSET_PRIVATE_CLEAN对应的是PrivateClean在stats结构体中的index，其他的部分以此类推。
 
-##### 5、Code分析
+### 5、Code分析
+了解了Code的组成，我们对于这部分的优化也可以更加的得心应手，我们可以参考load_maps的实现，将smaps文件pull出来，然后写python脚本将Code的组成部分的PrivateClean与PrivateDirty部分打印出来（可以只打印相对比较大的部分），这样就可以直观的看到具体是哪一部分占用的内存过多，再进行针对性的分析。（具体可以见[dump_smaps.py](https://github.com/dddjjq/ScriptTools/blob/main/Android/Memory/dump_smaps.py)）
 
-5、Code分析
+### 6、Graphics分析
 
-了解了Code的组成，我们对于这部分的优化也可以更加的得心应手，我们可以参考load_maps的实现，将smaps文件pull出来，然后写python脚本将Code的组成部分的PrivateClean与PrivateDirty部分打印出来（可以只打印相对比较大的部分），这样就可以直观的看到具体是哪一部分占用的内存过多，再进行针对性的分析。
+Graphics比较特殊，并不是从smaps文件中得到的。
+从前面的android_os_Debug_getDirtyPagesPid函数中，我们可以看到其实这里是调用read_memtrack_memory来读取graphics相关的内存：
+~~~c++
+/*
+ * Retrieves the graphics memory that is unaccounted for in /proc/pid/smaps.
+ */
+static int read_memtrack_memory(int pid, struct graphics_memory_pss* graphics_mem)
+{
+    ...
+    int err = read_memtrack_memory(p, pid, graphics_mem);
+    memtrack_proc_destroy(p);
+    return err;
+}
+~~~
+从注释可以看到，这部分其实是读取那些不在smaps中计数的内存，这里我们不在具体分析，可以参考[Memtrack hal](https://www.cnblogs.com/pyjetson/p/14769359.html)。Graphics这部分内存是GPU所占用的内存，包含EGL mtrack以及GL mtrack（GPU内存还包含一个Gfx dev，但是这些内存可以在smaps中读取到，以/dev/kgsl-3d0开头的就是这部分内存）。EGL mtrack/GL mtrack这部分内存是平台相关的，在高通平台上面有这样的映射关系：     
+**EGL mtrack => /sys/class/kgsl/kgsl/proc/[pid]/imported_mem  
+GL mtrack  => /sys/class/kgsl/kgsl/proc/[pid]/gpumem_unmapped**
 
-##### 6、Graphics分析
+读取这些文件可以发现，其实里面只有数值，对于GPU的内存分配不是特别了解，暂时只能到此为止。
 
-Graphics比较特殊，并不是从smaps文件中得到的，后面有时间补齐 //TODO 
+### 7、其他
 
-##### 7、其他
+像Java Heap以及Native Heap，市面上已经有相对完善的分析工具，我们这里暂时就不再深入。
 
-像Java Heap以及Native Heap，市面上已经有相对完善的分析工具，我们这里暂时就不再深入，等有需要再了解
-
-### 三、结论
+## 三、结论
 
 起因是公司的项目中从某个版本开始Code部分增长50M左右，但并没有行之有效的分析工具，所以从源码方面做一些分析。
 
@@ -286,8 +297,12 @@ Graphics比较特殊，并不是从smaps文件中得到的，后面有时间补�
 
 meminfo主要是通过读取进程的smaps文件，然后统计里面的相关信息得到。Code部分包含so、jar、apk、jit cache等，我们可以通过Python脚本的形式来做统计，可以更加直观。
 
-由于Code这部分有点众说纷纭，不能很好地区分到底是哪些部分，以及并没有完善的分析手段，所以我们这里从系统的统计方式出发，以这种形式来达到我们最终优化的目的。
+由于Code这部分有点众说纷纭，不能很好地区分到底是哪些部分，所以我们这里从系统的统计方式出发，以这种形式来达到我们最终优化的目的。
 
-### 四、参考
+## 四、参考
 
 [1、Gityuan Android内存分析命令](http://gityuan.com/2016/01/02/memory-analysis-command/)
+
+[2、android相机场景下整机内存分析](https://blog.csdn.net/buhui912/article/details/115909242)
+
+[3、Memtrack hal](https://www.cnblogs.com/pyjetson/p/14769359.html)
