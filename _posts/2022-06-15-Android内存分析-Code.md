@@ -306,3 +306,5 @@ meminfo主要是通过读取进程的smaps文件，然后统计里面的相关�
 [2、android相机场景下整机内存分析](https://blog.csdn.net/buhui912/article/details/115909242)
 
 [3、Memtrack hal](https://www.cnblogs.com/pyjetson/p/14769359.html)
+
+[4、ELC: How much memory are applications really using?](https://lwn.net/Articles/230975/)
