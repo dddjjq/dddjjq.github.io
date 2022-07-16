@@ -23,9 +23,7 @@ layout: default
 
   <div class="post-content e-content" itemprop="articleBody">
     {{ content }}
-    {% if page.comments_id %}
-			{% include comments.html %}
-		{% endif %}
+		{% include comments.html %}
     {% include navlinks.html %}
   </div>
 

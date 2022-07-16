@@ -2,7 +2,7 @@
     const GH_API_URL = 'https://api.github.com/repos/aristath/aristath.github.com/issues/5/comments?per_page=100?client_id=40242f112982f4e2047a&client_secret=e389d99b4de595092e48154974762c6ed8473a30';
     
     let request = new XMLHttpRequest();
-    request.open( 'GET', GH_API_URL, true );
+    request.open('GET', GH_API_URL, true );
     request.onload = function() {
         if ( this.status >= 200 && this.status < 400 ) {
             let response = JSON.parse( this.response );
